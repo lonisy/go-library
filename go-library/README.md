@@ -1,2 +1,0 @@
-# go-library
-Go Library
