@@ -74,14 +74,14 @@ func (s *Stage) initializeStage(stageType string, workers int) *Stage {
 }
 
 func (s *Stage) Run() {
-	lastStage := s // 初始化 lastStage 为当前 Stage
+	lastStage := s
 	for _, stage := range s.Stages {
 		switch stage.StageType {
 		case INPUT_STAGE:
 			s.runInputStage(stage)
 		case PROCESS_STAGE:
 			s.runProcessStage(stage, lastStage)
-			lastStage = stage // 更新 lastStage 为当前处理阶段
+			lastStage = stage
 		}
 	}
 }
@@ -113,19 +113,15 @@ func (s *Stage) Listen() {
 	go func() {
 		defer s.Wg.Done()
 		c := make(chan os.Signal)
-		signal.Notify(c, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGUSR2)
+		signal.Notify(c, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 		for si := range c {
 			switch si {
 			case syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT:
-				log.Println("Service Stoping By signal:", si)
+				log.Println("DataFlow Stopping By Signal:", si)
 				s.Stop()
 				return
-			case syscall.SIGUSR1:
-				log.Println("usr1", s)
-			case syscall.SIGUSR2:
-				log.Println("usr2", s)
 			default:
-				log.Println("other", s)
+				log.Println("Unhandled Signal:", si, s)
 			}
 		}
 	}()
@@ -143,11 +139,9 @@ func (s *Stage) Stop() {
 	app.Log.Info("Stopping...")
 	s.Cancel()
 	s.DataSourceTicker.Stop()
-	for idx, stage := range s.Stages {
+	for _, stage := range s.Stages {
 		if stage.StageType == INPUT_STAGE {
-			app.Log.Info("stage", stage.StageType, "close", idx)
 			stage.Wg.Wait()
-			app.Log.Info("stage", stage.StageType, "closed", idx)
 		}
 	}
 	app.Log.Info("Stopped...")
