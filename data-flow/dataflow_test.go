@@ -4,18 +4,22 @@ import (
 	"context"
 	"fmt"
 	"go-library/app"
+	"runtime"
 	"testing"
 	"time"
 )
 
 func TestDataFlow(t *testing.T) {
-	dataFlow := NewDataFlow(10, 100000)
-	//go func() {
-	//	for {
-	//		fmt.Println("NumGoroutine:", runtime.NumGoroutine())
-	//		time.Sleep(time.Second)
-	//	}
-	//}()
+	dataFlow := NewDataFlow(20000, 100000)
+	go func() {
+		for {
+			fmt.Println("NumGoroutine:", runtime.NumGoroutine())
+			time.Sleep(time.Second)
+			if runtime.NumGoroutine() <= 10 {
+				return
+			}
+		}
+	}()
 	//go MonitorGoroutines(1*time.Second, &dataFlow.Gc)
 	dataFlow.RegisterDataSource(func(ctx context.Context, out chan<- interface{}, ticker *time.Ticker) {
 		for i := 0; i < 100; i++ {

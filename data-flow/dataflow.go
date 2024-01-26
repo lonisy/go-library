@@ -48,60 +48,63 @@ func NewDataFlow(rateLimitPerSec, bufferSize int) *Stage {
 	}
 }
 
-func (s *Stage) RegisterDataSource(callback DataSourceFunc, workers int) *Stage {
-	e := new(Stage)
-	e.StageType = INPUT_STAGE
+func (s *Stage) RegisterDataSource(callback DataSourceFunc, workers int) {
+	e := s.initializeStage(INPUT_STAGE, workers)
 	e.DataSourceFunc = callback
-	e.Workers = workers
-	e.Gc = &GoroutineCounter{}
-	e.Gc.Add(e.Workers)
-	e.Wg.Add(e.Workers)
-	s.Wg.Add(e.Workers)
 	s.Stages = append(s.Stages, e)
-	return e
 }
 
-func (s *Stage) RegisterDataProcessor(callback DataProcessorFunc, workers int, chanSize int) *Stage {
-	e := new(Stage)
-	e.StageType = PROCESS_STAGE
+func (s *Stage) RegisterDataProcessor(callback DataProcessorFunc, workers int, chanSize int) {
+	e := s.initializeStage(PROCESS_STAGE, workers)
 	e.DataProcessorFunc = callback
-	e.Workers = workers
 	e.OutputChanSize = chanSize
 	e.DataChannel = make(chan interface{}, chanSize)
-	e.Gc = &GoroutineCounter{}
-	e.Gc.Add(e.Workers)
-	e.Wg.Add(e.Workers)
-	s.Wg.Add(e.Workers)
 	s.Stages = append(s.Stages, e)
+}
+
+func (s *Stage) initializeStage(stageType string, workers int) *Stage {
+	e := new(Stage)
+	e.StageType = stageType
+	e.Workers = workers
+	e.Gc = &GoroutineCounter{}
+	e.Gc.Add(workers)
+	e.Wg.Add(workers)
+	s.Wg.Add(workers)
 	return e
 }
 
 func (s *Stage) Run() {
+	lastStage := s // 初始化 lastStage 为当前 Stage
 	for _, stage := range s.Stages {
-		if stage.StageType == INPUT_STAGE {
-			for i := 0; i < stage.Workers; i++ {
-				go func(stage *Stage) {
-					defer s.Wg.Done()
-					defer stage.Wg.Done()
-					defer stage.Gc.Done()
-					stage.DataSourceFunc(s.Ctx, s.DataChannel, s.DataSourceTicker)
-				}(stage)
-			}
+		switch stage.StageType {
+		case INPUT_STAGE:
+			s.runInputStage(stage)
+		case PROCESS_STAGE:
+			s.runProcessStage(stage, lastStage)
+			lastStage = stage // 更新 lastStage 为当前处理阶段
 		}
 	}
-	lastStage := s
-	for _, stage := range s.Stages {
-		if stage.StageType == PROCESS_STAGE {
-			for i := 0; i < stage.Workers; i++ {
-				go func(stage *Stage, lastStage *Stage) {
-					defer s.Wg.Done()
-					defer stage.Wg.Done()
-					defer stage.closeChannel()
-					stage.DataProcessorFunc(s.Ctx, lastStage.DataChannel, stage.DataChannel)
-				}(stage, lastStage)
-			}
-			lastStage = stage
-		}
+}
+
+func (s *Stage) runInputStage(stage *Stage) {
+	for i := 0; i < stage.Workers; i++ {
+		go func(st *Stage) {
+			defer s.Wg.Done()
+			defer st.Wg.Done()
+			defer st.Gc.Done()
+			st.DataSourceFunc(s.Ctx, s.DataChannel, s.DataSourceTicker)
+		}(stage)
+	}
+}
+
+func (s *Stage) runProcessStage(stage, lastStage *Stage) {
+	for i := 0; i < stage.Workers; i++ {
+		go func(st, lastSt *Stage) {
+			defer s.Wg.Done()
+			defer st.Wg.Done()
+			defer st.closeChannel()
+			st.DataProcessorFunc(s.Ctx, lastSt.DataChannel, st.DataChannel)
+		}(stage, lastStage)
 	}
 }
 
