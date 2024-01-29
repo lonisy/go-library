@@ -1,9 +1,8 @@
 package gin
 
 import (
-	"fmt"
+	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
-	"go-library/str"
 	"golang.org/x/net/context"
 	"log"
 	"net/http"
@@ -16,12 +15,13 @@ import (
 )
 
 type HttpServer struct {
+	*gin.Engine
 	AppName string
 	Actions map[string]interface{}
 	State   chan os.Signal
 }
 
-func NewServer(appName string) *HttpServer {
+func NewHttpServer(appName string) *HttpServer {
 	return &HttpServer{
 		AppName: appName,
 		Actions: make(map[string]interface{}, 0),
@@ -29,14 +29,51 @@ func NewServer(appName string) *HttpServer {
 	}
 }
 
+func (r *HttpServer) MvcRouter() *HttpServer {
+	r.Static("/assets", "./dist/assets")
+	r.StaticFile("/favicon.png", "./dist/favicon.png")
+	r.LoadHTMLGlob("./dist/*.html")
+	return r
+}
+
+func (r *HttpServer) AnyApiRouter() *HttpServer {
+	apiGroups := r.Group("/api/v1")
+	apiGroups.Any("/:arg1/:arg2/:arg3/:arg4", r.RouteMatch)
+	apiGroups.Any("/:arg1/:arg2/:arg3", r.RouteMatch)
+	apiGroups.Any("/:arg1/:arg2", r.RouteMatch)
+	apiGroups.Any("/:arg1", r.RouteMatch)
+	return r
+}
+
+func (r *HttpServer) UseGzip() *HttpServer {
+	r.Use(gzip.Gzip(gzip.DefaultCompression))
+	return r
+}
+
+func (r *HttpServer) UseCORS() *HttpServer {
+	r.Use(CORSMiddleware())
+	return r
+}
+
+func (r *HttpServer) UseApiNotFound() *HttpServer {
+	r.NoRoute(func(c *gin.Context) {
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    -1,
+			"message": "NotFound",
+		})
+	})
+	return r
+}
+
 func (s *HttpServer) Start(srv *http.Server) {
 	go func() {
+		log.Println("Start Server ...")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("listen%s %s\n", srv.Addr, err)
 		}
 	}()
 	s.State = make(chan os.Signal)
-	signal.Notify(s.State, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGUSR2)
+	signal.Notify(s.State, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	<-s.State
 	log.Println("Shutdown Server ...")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -58,7 +95,7 @@ func (s *HttpServer) Register(module interface{}) {
 	s.Actions[reflect.TypeOf(module).String()] = module
 }
 
-func (s *HttpServer) Routing(c *gin.Context) {
+func (s *HttpServer) RouteMatch(c *gin.Context) {
 	if len(c.Params) >= 1 {
 		cc := ""
 		for action, _ := range s.Actions {
@@ -74,7 +111,7 @@ func (s *HttpServer) Routing(c *gin.Context) {
 				cc = action
 				MethodName := "Index"
 				if len(c.Params) >= 2 {
-					MethodName = str.StringToCamel(strings.ReplaceAll(c.Params[1].Value, "-", "_"))
+					MethodName = stringToCamel(strings.ReplaceAll(c.Params[1].Value, "-", "_"))
 				}
 				_, ok := reflect.TypeOf(s.Actions[cc]).MethodByName(MethodName)
 				if ok {
@@ -82,11 +119,10 @@ func (s *HttpServer) Routing(c *gin.Context) {
 					params := make([]reflect.Value, 1)
 					params[0] = reflect.ValueOf(c)
 					method.Call(params)
-					fmt.Println("auto router called")
+					log.Printf("router %s.%s called", cc, MethodName)
 					return
 				} else {
-					fmt.Println("router miss")
-					fmt.Println("router default")
+					log.Printf("router %s.%s miss", cc, MethodName)
 					method := reflect.ValueOf(s.Actions[cc]).MethodByName("Index")
 					params := make([]reflect.Value, 1)
 					params[0] = reflect.ValueOf(c)
@@ -103,4 +139,28 @@ func (s *HttpServer) Routing(c *gin.Context) {
 		"message": "NotFound",
 	})
 	return
+}
+
+func stringToCamel(s string) string {
+	data := make([]byte, 0, len(s))
+	j := false
+	k := false
+	num := len(s) - 1
+	for i := 0; i <= num; i++ {
+		d := s[i]
+		if k == false && d >= 'A' && d <= 'Z' {
+			k = true
+		}
+		if d >= 'a' && d <= 'z' && (j || k == false) {
+			d = d - 32
+			j = false
+			k = true
+		}
+		if k && d == '_' && num > i && s[i+1] >= 'a' && s[i+1] <= 'z' {
+			j = true
+			continue
+		}
+		data = append(data, d)
+	}
+	return string(data[:])
 }
